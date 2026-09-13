@@ -1,0 +1,49 @@
+{
+  "nodes": {
+    "origin": {
+      "id": "origin",
+      "type": "seed",
+      "data": {
+        "message": "primeiro nó"
+      },
+      "created_at": "2026-09-12T01:14:52.695729+00:00"
+    },
+    "node_001": {
+      "id": "node_001",
+      "type": "generated",
+      "data": {
+        "message": "nó criado por transformação"
+      },
+      "created_at": "2026-09-12T01:14:52.695758+00:00"
+    }
+  },
+  "edges": [
+    {
+      "source": "origin",
+      "target": "node_001",
+      "relation": "created"
+    }
+  ],
+  "history": [
+    {
+      "action": "add_node",
+      "node_id": "origin",
+      "node_type": "seed",
+      "timestamp": "2026-09-12T01:14:52.695729+00:00"
+    },
+    {
+      "action": "add_node",
+      "node_id": "node_001",
+      "node_type": "generated",
+      "timestamp": "2026-09-12T01:14:52.695758+00:00"
+    },
+    {
+      "action": "connect",
+      "source": "origin",
+      "target": "node_001",
+      "relation": "created",
+      "timestamp": "2026-09-12T01:14:52.695767+00:00"
+    }
+  ],
+  "hash": "1e6ec594f12e0e61a5fdf57bf7dfed0de112ee4b09ccd6c4ff322450e289c871"
+}
