@@ -5,3 +5,23 @@ __pycache__/
 .venv/
 venv/
 .env
+
+# Backups e artefatos temporários
+*.bak
+*.before_*
+*.backup
+
+# Memória e resultados gerados localmente
+generalization_memory.json
+generalization_results.json
+graph_persistence_test.json
+trajectory_choices_memory.json
+transition_memory.json
+transition_memory_benchmark.json
+two_step_memory.json
+graph_persistence_test.json
+tests/*_persistence_test.json
+
+# Ambientes e caches
+.pytest_cache/
+.mypy_cache/

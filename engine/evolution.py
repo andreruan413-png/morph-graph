@@ -145,6 +145,265 @@ class EvolutionEngine:
             )
         }
 
+    def evolve_with_exploration(
+        self,
+        source_id,
+        generations=5,
+        allow_non_improving=True,
+        max_states=50,
+    ):
+        """
+        Busca evolutiva que permite atravessar estados
+        temporariamente não melhores.
+
+        Mantém o ranking e a memória existentes, mas amplia
+        a fronteira de busca em vez de exigir melhoria imediata.
+        """
+
+        source = self.graph.nodes.get(source_id)
+
+        if not source:
+            raise ValueError(
+                f"Nó de origem não existe: {source_id}"
+            )
+
+        self.memory.remember(source_id)
+
+        source_code = source["data"].get("code", "")
+
+        if self.tests is not None:
+            initial_result = evaluate_problem(
+                source_code,
+                self.tests,
+            )
+            initial_score = initial_result.score
+        else:
+            from engine.verifier import verify_python_code
+
+            initial_result = verify_python_code(
+                source_code
+            )
+
+            initial_score = (
+                1.0
+                if initial_result.success
+                else 0.0
+            )
+
+        frontier = [
+            {
+                "node_id": source_id,
+                "score": initial_score,
+                "path": [],
+            }
+        ]
+
+        visited_codes = {
+            source_code
+        }
+
+        generations_data = []
+
+        best_state = frontier[0]
+
+        states_explored = 0
+
+        for generation in range(
+            1,
+            generations + 1
+        ):
+
+            next_frontier = []
+
+            for state in frontier:
+
+                if states_explored >= max_states:
+                    break
+
+                current_node_id = state["node_id"]
+
+                candidates = self.generate_candidates(
+                    current_node_id
+                )
+
+                ranked = rank_candidates(
+                    self.graph,
+                    current_node_id,
+                    candidates,
+                )
+
+                # O ranking existente pode retornar dicionários
+                # com formatos diferentes. Recuperamos o candidato
+                # sem assumir uma chave "name".
+                ordered_candidates = []
+
+                for item in ranked:
+
+                    if hasattr(item, "code"):
+                        ordered_candidates.append(item)
+                        continue
+
+                    if isinstance(item, dict):
+
+                        candidate = item.get(
+                            "candidate"
+                        )
+
+                        if candidate is not None:
+                            ordered_candidates.append(
+                                candidate
+                            )
+                            continue
+
+                        candidate_name = (
+                            item.get("name")
+                            or item.get("rule")
+                            or item.get("candidate_name")
+                        )
+
+                        if candidate_name:
+                            candidate = next(
+                                (
+                                    candidate
+                                    for candidate in candidates
+                                    if candidate.name
+                                    == candidate_name
+                                ),
+                                None,
+                            )
+
+                            if candidate is not None:
+                                ordered_candidates.append(
+                                    candidate
+                                )
+
+                # Fallback: nenhum formato conhecido foi encontrado.
+                # Não inventamos candidato; usamos a lista original.
+                if not ordered_candidates:
+                    ordered_candidates = list(candidates)
+
+                selected = None
+
+                for candidate in ordered_candidates:
+
+                    if states_explored >= max_states:
+                        break
+
+                    candidate_code = candidate.code()
+
+                    if candidate_code in visited_codes:
+                        continue
+
+                    visited_codes.add(candidate_code)
+
+                    result = self.evaluate_candidate(
+                        current_node_id,
+                        candidate,
+                    )
+
+                    states_explored += 1
+
+                    candidate_state = {
+                        "node_id": result["node_id"],
+                        "score": result["score"],
+                        "path": state["path"] + [
+                            candidate.name
+                        ],
+                    }
+
+                    if (
+                        result["node_id"] is not None
+                        and result["score"]
+                        > best_state["score"]
+                    ):
+                        best_state = candidate_state
+
+                    if selected is None:
+                        selected = {
+                            "node_id": result["node_id"],
+                            "rule": candidate.name,
+                            "score": result["score"],
+                            "region_index": getattr(
+                                candidate,
+                                "region_index",
+                                None,
+                            ),
+                            "region_type": getattr(
+                                candidate,
+                                "region_type",
+                                None,
+                            ),
+                        }
+
+                    if result["node_id"] is None:
+                        continue
+
+                    if (
+                        result["score"] >= state["score"]
+                        or allow_non_improving
+                    ):
+                        next_frontier.append(
+                            candidate_state
+                        )
+
+                    if result["score"] >= 1.0:
+
+                        generations_data.append(
+                            {
+                                "generation": generation,
+                                "source": current_node_id,
+                                "selected": selected,
+                                "states_explored": states_explored,
+                            }
+                        )
+
+                        return {
+                            "success": True,
+                            "final_node": result["node_id"],
+                            "final_score": result["score"],
+                            "generations": generations_data,
+                            "states_explored": states_explored,
+                            "path": candidate_state["path"],
+                        }
+
+            generations_data.append(
+                {
+                    "generation": generation,
+                    "source": (
+                        frontier[0]["node_id"]
+                        if frontier
+                        else source_id
+                    ),
+                    "selected": selected or {},
+                    "states_explored": states_explored,
+                }
+            )
+
+            if not next_frontier:
+                break
+
+            next_frontier.sort(
+                key=lambda item: (
+                    item["score"],
+                    -len(item["path"]),
+                ),
+                reverse=True,
+            )
+
+            frontier = next_frontier[
+                :max_states
+            ]
+
+        return {
+            "success": best_state["score"] >= 1.0,
+            "final_node": best_state["node_id"],
+            "final_score": best_state["score"],
+            "generations": generations_data,
+            "states_explored": states_explored,
+            "path": best_state["path"],
+        }
+
+
     def evolve(
         self,
         source_id,

@@ -3,8 +3,11 @@ from engine.trajectory_memory import TrajectoryMemory
 
 class TrajectoryGuidance:
 
-    def __init__(self, graph):
-        self.memory = TrajectoryMemory(graph)
+    def __init__(self, graph, problem_id=None):
+        self.memory = TrajectoryMemory(
+            graph,
+            problem_id=problem_id,
+        )
 
     def priorities(self, path):
         """

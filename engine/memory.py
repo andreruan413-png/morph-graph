@@ -2,16 +2,50 @@ import ast
 import hashlib
 
 
-def code_signature(code):
-    """
-    Gera uma assinatura estrutural do código.
+class _NormalizeAST(ast.NodeTransformer):
 
-    A formatação e os espaços são ignorados.
-    O objetivo é reconhecer quando o MORPH-GRAPH
-    chegou novamente à mesma estrutura de programa.
-    """
+    def __init__(self):
+        super().__init__()
+        self.variable_map = {}
+        self.argument_index = 0
 
+    def _normalize_name(self, name):
+        if name not in self.variable_map:
+            self.variable_map[name] = f"VAR{len(self.variable_map)}"
+        return self.variable_map[name]
+
+    def visit_Name(self, node):
+        node.id = self._normalize_name(node.id)
+        return node
+
+    def visit_arg(self, node):
+        node.arg = self._normalize_name(node.arg)
+        return node
+
+    def visit_FunctionDef(self, node):
+        node.name = "FUNCTION"
+        self.generic_visit(node)
+        return node
+
+    def visit_AsyncFunctionDef(self, node):
+        node.name = "FUNCTION"
+        self.generic_visit(node)
+        return node
+
+
+def normalized_ast(code):
     tree = ast.parse(code)
+
+    normalizer = _NormalizeAST()
+    tree = normalizer.visit(tree)
+
+    ast.fix_missing_locations(tree)
+
+    return tree
+
+
+def code_signature(code):
+    tree = normalized_ast(code)
 
     normalized = ast.dump(
         tree,
@@ -30,85 +64,44 @@ class GraphMemory:
         self.graph = graph
 
     def signatures(self):
-        """
-        Retorna as assinaturas dos códigos que já existem
-        no grafo.
-        """
-
-        known = {}
-
-        for node_id, node in self.graph.nodes.items():
-
-            if node["type"] != "code":
-                continue
-
-            code = node["data"].get("code")
-
-            if not code:
-                continue
-
-            try:
-                signature = code_signature(code)
-            except SyntaxError:
-                continue
-
-            known[signature] = node_id
-
-        return known
+        return {
+            code_signature(
+                node["data"].get("code", "")
+            )
+            for node in self.graph.nodes.values()
+            if node["type"] == "code"
+            and node["data"].get("code")
+        }
 
     def has_seen(self, code):
-        """
-        Verifica se a estrutura do código já apareceu no grafo.
-        """
-
-        signature = code_signature(code)
-
-        return signature in self.signatures()
+        return code_signature(code) in self.signatures()
 
     def remember(self, node_id):
-        """
-        Retorna a assinatura do nó.
-        A memória é persistida no próprio grafo,
-        porque o código já está registrado como nó.
-        """
+        node = self.graph.nodes.get(node_id)
 
-        node = self.graph.nodes[node_id]
+        if not node or node["type"] != "code":
+            return False
 
-        if node["type"] != "code":
-            raise ValueError(
-                "Somente nós do tipo 'code' podem ser memorizados."
-            )
+        node["data"]["memory_signature"] = code_signature(
+            node["data"].get("code", "")
+        )
 
-        code = node["data"].get("code")
-
-        if not code:
-            raise ValueError(
-                f"Nó '{node_id}' não contém código."
-            )
-
-        signature = code_signature(code)
-
-        node["data"]["signature"] = signature
-
-        return signature
+        return True
 
     def is_duplicate(self, node_id):
-        """
-        Verifica se o nó possui uma estrutura igual
-        à de outro nó anterior.
-        """
+        node = self.graph.nodes.get(node_id)
 
-        node = self.graph.nodes[node_id]
-
-        if node["type"] != "code":
+        if not node:
             return False
 
-        code = node["data"].get("code")
+        code = node["data"].get("code", "")
 
         if not code:
             return False
 
         signature = code_signature(code)
+
+        matches = []
 
         for other_id, other in self.graph.nodes.items():
 
@@ -118,19 +111,12 @@ class GraphMemory:
             if other["type"] != "code":
                 continue
 
-            other_code = other["data"].get("code")
+            other_code = other["data"].get("code", "")
 
             if not other_code:
                 continue
 
-            try:
-                other_signature = code_signature(
-                    other_code
-                )
-            except SyntaxError:
-                continue
+            if code_signature(other_code) == signature:
+                matches.append(other_id)
 
-            if signature == other_signature:
-                return True
-
-        return False
+        return bool(matches)

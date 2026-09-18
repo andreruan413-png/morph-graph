@@ -73,6 +73,19 @@ class Graph:
 
         return graph
 
+    @classmethod
+    def load(cls, path):
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        graph = cls()
+
+        graph.nodes = data.get("nodes", {})
+        graph.edges = data.get("edges", [])
+        graph.history = data.get("history", [])
+
+        return graph
+
     def save(self, path):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(

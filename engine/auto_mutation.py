@@ -1,436 +1,177 @@
 import ast
 import copy
 
+from engine.composite_mutation import generate_composite_mutations
+
 
 class MutationCandidate:
-
-    def __init__(self, name, tree):
+    def __init__(
+        self,
+        name,
+        tree,
+        region_index=None,
+        region_type=None,
+        mutation_type=None,
+    ):
         self.name = name
         self.tree = tree
+        self.region_index = region_index
+        self.region_type = region_type
+        self.mutation_type = mutation_type
 
     def code(self):
         ast.fix_missing_locations(self.tree)
         return ast.unparse(self.tree)
 
+    def as_dict(self):
+        return {
+            "name": self.name,
+            "region_index": self.region_index,
+            "region_type": self.region_type,
+            "mutation_type": self.mutation_type,
+            "code": self.code(),
+        }
+
 
 class AutomaticASTMutator:
 
-    def generate(self, code):
-
-        original = ast.parse(code)
-
-        candidates = []
-
-        # ==================================================
-        # BINOP
-        # ==================================================
-
-        for index, node in enumerate(
-            self._find_nodes(original, ast.BinOp)
-        ):
-
-            if isinstance(node.op, ast.Add):
-
-                candidates.append(
-                    self._replace_binop(
-                        original,
-                        index,
-                        ast.Sub(),
-                        f"binop_{index}_add_to_sub"
-                    )
-                )
-
-                candidates.append(
-                    self._swap_operands(
-                        original,
-                        index,
-                        f"binop_{index}_swap"
-                    )
-                )
-
-                candidates.append(
-                    self._replace_binop(
-                        original,
-                        index,
-                        ast.Mult(),
-                        f"binop_{index}_add_to_mult"
-                    )
-                )
-
-            elif isinstance(node.op, ast.Sub):
-
-                candidates.append(
-                    self._replace_binop(
-                        original,
-                        index,
-                        ast.Add(),
-                        f"binop_{index}_sub_to_add"
-                    )
-                )
-
-                candidates.append(
-                    self._swap_operands(
-                        original,
-                        index,
-                        f"binop_{index}_swap"
-                    )
-                )
-
-            elif isinstance(node.op, ast.Mult):
-
-                candidates.append(
-                    self._replace_binop(
-                        original,
-                        index,
-                        ast.Div(),
-                        f"binop_{index}_mult_to_div"
-                    )
-                )
-
-            elif isinstance(node.op, ast.Div):
-
-                candidates.append(
-                    self._replace_binop(
-                        original,
-                        index,
-                        ast.Mult(),
-                        f"binop_{index}_div_to_mult"
-                    )
-                )
-
-        # ==================================================
-        # COMPARAÇÕES
-        # ==================================================
-
-        for index, node in enumerate(
-            self._find_nodes(original, ast.Compare)
-        ):
-
-            for op_index, operator in enumerate(
-                node.ops
-            ):
-
-                replacements = []
-
-                if isinstance(operator, ast.Eq):
-
-                    replacements = [
-                        (
-                            ast.NotEq(),
-                            "eq_to_neq"
-                        )
-                    ]
-
-                elif isinstance(operator, ast.NotEq):
-
-                    replacements = [
-                        (
-                            ast.Eq(),
-                            "neq_to_eq"
-                        )
-                    ]
-
-                elif isinstance(operator, ast.Lt):
-
-                    replacements = [
-                        (
-                            ast.LtE(),
-                            "lt_to_lte"
-                        ),
-                        (
-                            ast.Gt(),
-                            "lt_to_gt"
-                        )
-                    ]
-
-                elif isinstance(operator, ast.LtE):
-
-                    replacements = [
-                        (
-                            ast.Lt(),
-                            "lte_to_lt"
-                        )
-                    ]
-
-                elif isinstance(operator, ast.Gt):
-
-                    replacements = [
-                        (
-                            ast.GtE(),
-                            "gt_to_gte"
-                        ),
-                        (
-                            ast.Lt(),
-                            "gt_to_lt"
-                        )
-                    ]
-
-                elif isinstance(operator, ast.GtE):
-
-                    replacements = [
-                        (
-                            ast.Gt(),
-                            "gte_to_gt"
-                        )
-                    ]
-
-                for replacement, name in replacements:
-
-                    tree = copy.deepcopy(
-                        original
-                    )
-
-                    compares = self._find_nodes(
-                        tree,
-                        ast.Compare
-                    )
-
-                    target = compares[index]
-
-                    target.ops[op_index] = replacement
-
-                    candidates.append(
-                        MutationCandidate(
-                            f"compare_{index}_{op_index}_{name}",
-                            tree
-                        )
-                    )
-
-        # ==================================================
-        # CONSTANTES NUMÉRICAS
-        # ==================================================
-
-        for index, node in enumerate(
-            self._numeric_constants(original)
-        ):
-
-            for delta, name in [
-                (1, "plus_one"),
-                (-1, "minus_one")
-            ]:
-
-                tree = copy.deepcopy(
-                    original
-                )
-
-                constants = self._numeric_constants(
-                    tree
-                )
-
-                target = constants[index]
-
-                target.value = node.value + delta
-
-                candidates.append(
-                    MutationCandidate(
-                        f"constant_{index}_{name}",
-                        tree
-                    )
-                )
-
-        # ==================================================
-        # AND / OR
-        # ==================================================
-
-        for index, node in enumerate(
-            self._find_nodes(original, ast.BoolOp)
-        ):
-
-            if isinstance(node.op, ast.And):
-
-                tree = copy.deepcopy(
-                    original
-                )
-
-                boolops = self._find_nodes(
-                    tree,
-                    ast.BoolOp
-                )
-
-                boolops[index].op = ast.Or()
-
-                candidates.append(
-                    MutationCandidate(
-                        f"boolop_{index}_and_to_or",
-                        tree
-                    )
-                )
-
-            elif isinstance(node.op, ast.Or):
-
-                tree = copy.deepcopy(
-                    original
-                )
-
-                boolops = self._find_nodes(
-                    tree,
-                    ast.BoolOp
-                )
-
-                boolops[index].op = ast.And()
-
-                candidates.append(
-                    MutationCandidate(
-                        f"boolop_{index}_or_to_and",
-                        tree
-                    )
-                )
-
-        return self._remove_duplicates(
-            candidates
-        )
-
-    # ======================================================
-    # BUSCA NÓS DA AST
-    # ======================================================
-
-    def _find_nodes(
-        self,
-        tree,
-        node_type
-    ):
-
+    def _find_nodes(self, tree, node_type):
         return [
             node
             for node in ast.walk(tree)
             if isinstance(node, node_type)
         ]
 
-    # ======================================================
-    # CONSTANTES NUMÉRICAS
-    # ======================================================
-
-    def _numeric_constants(
-        self,
-        tree
-    ):
-
-        return [
-            node
-            for node in ast.walk(tree)
-            if (
-                isinstance(node, ast.Constant)
-                and isinstance(
-                    node.value,
-                    (int, float)
-                )
-                and not isinstance(
-                    node.value,
-                    bool
-                )
-            )
-        ]
-
-    # ======================================================
-    # SUBSTITUIR BINOP
-    # ======================================================
-
     def _replace_binop(
         self,
-        original,
-        index,
-        operator,
-        name
+        tree,
+        target_index,
+        new_op,
+        name,
     ):
+        new_tree = copy.deepcopy(tree)
 
-        tree = copy.deepcopy(
-            original
-        )
+        count = 0
 
-        binops = self._find_nodes(
-            tree,
-            ast.BinOp
-        )
+        for node in ast.walk(new_tree):
+            if isinstance(node, ast.BinOp):
 
-        if index >= len(binops):
+                if count == target_index:
+                    node.op = new_op
+                    break
 
-            raise RuntimeError(
-                "Índice de BinOp inválido: "
-                f"{index} >= {len(binops)}"
-            )
-
-        target = binops[index]
-
-        target.op = operator
+                count += 1
 
         return MutationCandidate(
-            name,
-            tree
+            name=name,
+            tree=new_tree,
+            region_index=target_index,
+            region_type="BinOp",
+            mutation_type="operator_change",
         )
-
-    # ======================================================
-    # TROCAR OPERANDOS
-    # ======================================================
 
     def _swap_operands(
         self,
-        original,
-        index,
-        name
+        tree,
+        target_index,
+        name,
     ):
+        new_tree = copy.deepcopy(tree)
 
-        tree = copy.deepcopy(
-            original
-        )
+        count = 0
 
-        binops = self._find_nodes(
-            tree,
-            ast.BinOp
-        )
+        for node in ast.walk(new_tree):
+            if isinstance(node, ast.BinOp):
 
-        if index >= len(binops):
+                if count == target_index:
+                    node.left, node.right = (
+                        node.right,
+                        node.left,
+                    )
+                    break
 
-            raise RuntimeError(
-                "Índice de BinOp inválido: "
-                f"{index} >= {len(binops)}"
-            )
-
-        target = binops[index]
-
-        target.left, target.right = (
-            target.right,
-            target.left
-        )
+                count += 1
 
         return MutationCandidate(
-            name,
-            tree
+            name=name,
+            tree=new_tree,
+            region_index=target_index,
+            region_type="BinOp",
+            mutation_type="operand_swap",
         )
 
-    # ======================================================
-    # REMOVER DUPLICATAS
-    # ======================================================
+    def generate(self, code):
+        original = ast.parse(code)
 
-    def _remove_duplicates(
-        self,
-        candidates
-    ):
+        candidates = []
 
-        seen = set()
+        operators = {
+            ast.Add: [
+                (ast.Sub, "add_to_sub"),
+                (ast.Mult, "add_to_mult"),
+            ],
+            ast.Sub: [
+                (ast.Add, "sub_to_add"),
+                (ast.Mult, "sub_to_mult"),
+            ],
+            ast.Mult: [
+                (ast.Add, "mult_to_add"),
+                (ast.Sub, "mult_to_sub"),
+            ],
+        }
 
-        unique = []
+        binops = self._find_nodes(
+            original,
+            ast.BinOp,
+        )
 
-        for candidate in candidates:
+        for index, node in enumerate(binops):
 
-            try:
+            node_type = type(node.op)
 
-                generated_code = (
-                    candidate.code()
+            for new_op, operation_name in operators.get(
+                node_type,
+                [],
+            ):
+                candidates.append(
+                    self._replace_binop(
+                        original,
+                        index,
+                        new_op(),
+                        f"binop_{index}_{operation_name}",
+                    )
                 )
 
-            except Exception:
+            if node_type in (
+                ast.Add,
+                ast.Sub,
+                ast.Mult,
+            ):
+                candidates.append(
+                    self._swap_operands(
+                        original,
+                        index,
+                        f"binop_{index}_swap",
+                    )
+                )
 
-                continue
+        composite_candidates = (
+            generate_composite_mutations(code)
+        )
 
-            if generated_code in seen:
-                continue
+        for candidate in composite_candidates:
+            candidate.region_index = None
+            candidate.region_type = "BinOp"
 
-            seen.add(
-                generated_code
-            )
+            if not getattr(
+                candidate,
+                "mutation_type",
+                None,
+            ):
+                candidate.mutation_type = "composite"
 
-            unique.append(
-                candidate
-            )
+        candidates.extend(
+            composite_candidates
+        )
 
-        return unique
+        return candidates
