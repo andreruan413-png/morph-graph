@@ -5,7 +5,6 @@ import os
 
 
 class ProblemResult:
-
     def __init__(
         self,
         success,
@@ -32,66 +31,58 @@ class ProblemResult:
             "total": self.total,
             "stdout": self.stdout,
             "stderr": self.stderr,
-            "reason": self.reason
+            "reason": self.reason,
         }
 
 
-def evaluate_problem(
-    code,
-    tests,
-    timeout=3
-):
+def evaluate_problem(code, tests, timeout=3):
     """
-    Executa o código candidato contra todos os testes.
+    Avalia o código candidato.
 
-    Cada teste deve estar em uma linha começando com TEST:.
+    Aceita:
+      1. testes no formato TEST:
+         TEST: calcular(10, 3) == 13
+         TEST: assert calcular(20, 5) == 25
 
-    Exemplos:
-
-    TEST: resolver(3, 2) == (5, 1)
-    TEST: assert resolver(10, 4) == (14, 6)
+      2. script Python completo que recebe o caminho do candidato
+         em sys.argv[1].
     """
 
-    test_lines = [
-        line.strip()[len("TEST:"):].strip()
-        for line in tests.splitlines()
-        if line.strip().startswith("TEST:")
-    ]
-
-    if not test_lines:
-        raise ValueError(
-            "Nenhum teste encontrado."
-        )
+    if not tests or not tests.strip():
+        raise ValueError("Nenhum teste encontrado.")
 
     candidate_path = None
     runner_path = None
 
     try:
-
         with tempfile.NamedTemporaryFile(
             mode="w",
             suffix=".py",
             delete=False,
             encoding="utf-8"
         ) as candidate_file:
-
             candidate_file.write(code)
             candidate_path = candidate_file.name
 
-        test_blocks = []
+        # Formato TEST:
+        test_lines = [
+            line.strip()[len("TEST:"):].strip()
+            for line in tests.splitlines()
+            if line.strip().startswith("TEST:")
+        ]
 
-        for index, expression in enumerate(
-            test_lines,
-            start=1
-        ):
+        if test_lines:
+            test_blocks = []
 
-            if expression.startswith("assert "):
-                assertion = expression
-            else:
-                assertion = f"assert {expression}"
+            for index, expression in enumerate(test_lines, start=1):
+                assertion = (
+                    expression
+                    if expression.startswith("assert ")
+                    else f"assert {expression}"
+                )
 
-            test_blocks.append(
-                f"""
+                test_blocks.append(
+                    f"""
 try:
     {assertion}
     passed += 1
@@ -100,14 +91,13 @@ except AssertionError as exc:
     print("TEST_FAIL:{index}", exc)
 except Exception as exc:
     print("TEST_ERROR:{index}", type(exc).__name__, exc)
-""".replace(
-                    "{index}",
-                    str(index)
+""".replace("{index}", str(index))
                 )
-            )
 
-        runner = f"""
+            runner = f"""
 import importlib.util
+
+passed = 0
 
 spec = importlib.util.spec_from_file_location(
     "candidate",
@@ -115,24 +105,17 @@ spec = importlib.util.spec_from_file_location(
 )
 
 candidate = importlib.util.module_from_spec(spec)
-
 spec.loader.exec_module(candidate)
 
-globals().update(
-    {{
-        name: getattr(candidate, name)
-        for name in dir(candidate)
-        if not name.startswith("_")
-    }}
-)
+{"".join(test_blocks)}
 
-passed = 0
 total = {len(test_lines)}
-
-{chr(10).join(test_blocks)}
-
-print(f"RESULT:{{passed}}/{{total}}")
+print(f"TEST_SUMMARY:{{passed}}/{{total}}")
 """
+
+        else:
+            # Script Python completo.
+            runner = tests
 
         with tempfile.NamedTemporaryFile(
             mode="w",
@@ -140,56 +123,63 @@ print(f"RESULT:{{passed}}/{{total}}")
             delete=False,
             encoding="utf-8"
         ) as runner_file:
-
             runner_file.write(runner)
             runner_path = runner_file.name
 
-        env = os.environ.copy()
-
-        env.pop(
-            "PYTHONOPTIMIZE",
-            None
-        )
-
-        result = subprocess.run(
-            [
-                sys.executable,
-                runner_path
-            ],
+        process = subprocess.run(
+            [sys.executable, runner_path, candidate_path],
             capture_output=True,
             text=True,
-            timeout=timeout,
-            env=env
+            timeout=timeout
         )
 
-        stdout = result.stdout
-        stderr = result.stderr
+        stdout = process.stdout
+        stderr = process.stderr
 
-        passed = stdout.count(
-            "TEST_PASS:"
+        # Script completo: sucesso = processo terminou sem erro.
+        if not test_lines:
+            success = process.returncode == 0
+
+            passed = 0
+            total = 0
+
+            for line in stdout.splitlines():
+                if line.startswith("TEST_PASS:"):
+                    passed += 1
+                elif line.startswith("TEST_FAIL:") or line.startswith("TEST_ERROR:"):
+                    total += 1
+
+            if passed or total:
+                total = max(total, passed)
+            else:
+                total = 1 if success else 0
+                passed = 1 if success else 0
+
+            score = passed / total if total else (1.0 if success else 0.0)
+
+            return ProblemResult(
+                success=success,
+                score=score,
+                passed=passed,
+                total=total,
+                stdout=stdout,
+                stderr=stderr,
+                reason=(
+                    "Todos os testes passaram."
+                    if success
+                    else "O script de testes falhou."
+                ),
+            )
+
+        # Formato TEST:
+        passed = sum(
+            1 for line in stdout.splitlines()
+            if line.startswith("TEST_PASS:")
         )
 
         total = len(test_lines)
-
-        score = (
-            passed / total
-            if total
-            else 0.0
-        )
-
-        success = (
-            passed == total
-        )
-
-        reason = (
-            f"{passed}/{total} testes passaram"
-        )
-
-        if stderr.strip():
-            reason += (
-                f" | stderr: "
-                f"{stderr.strip()}"
-            )
+        success = process.returncode == 0 and passed == total
+        score = passed / total if total else 0.0
 
         return ProblemResult(
             success=success,
@@ -198,49 +188,17 @@ print(f"RESULT:{{passed}}/{{total}}")
             total=total,
             stdout=stdout,
             stderr=stderr,
-            reason=reason
-        )
-
-    except subprocess.TimeoutExpired:
-
-        return ProblemResult(
-            success=False,
-            score=0.0,
-            passed=0,
-            total=len(test_lines),
-            stdout="",
-            stderr="timeout",
             reason=(
-                "execução excedeu "
-                "o limite de tempo"
-            )
-        )
-
-    except Exception as exc:
-
-        return ProblemResult(
-            success=False,
-            score=0.0,
-            passed=0,
-            total=len(test_lines),
-            stdout="",
-            stderr=str(exc),
-            reason=(
-                "erro ao avaliar candidato: "
-                f"{type(exc).__name__}: {exc}"
-            )
+                "Todos os testes passaram."
+                if success
+                else f"{passed}/{total} testes passaram."
+            ),
         )
 
     finally:
-
-        if (
-            candidate_path
-            and os.path.exists(candidate_path)
-        ):
-            os.remove(candidate_path)
-
-        if (
-            runner_path
-            and os.path.exists(runner_path)
-        ):
-            os.remove(runner_path)
+        for path in (candidate_path, runner_path):
+            if path and os.path.exists(path):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass

@@ -100,6 +100,28 @@ class AutomaticASTMutator:
             mutation_type="operand_swap",
         )
 
+    def _swap_call_args(self, tree, target_index, arg_a, arg_b, name):
+        new_tree = copy.deepcopy(tree)
+        count = 0
+
+        for node in ast.walk(new_tree):
+            if isinstance(node, ast.Call) and len(node.args) >= 2:
+                if count == target_index:
+                    node.args[arg_a], node.args[arg_b] = (
+                        node.args[arg_b],
+                        node.args[arg_a],
+                    )
+                    break
+                count += 1
+
+        return MutationCandidate(
+            name=name,
+            tree=new_tree,
+            region_index=target_index,
+            region_type="Call",
+            mutation_type="argument_swap",
+        )
+
     def generate(self, code):
         original = ast.parse(code)
 
@@ -152,6 +174,20 @@ class AutomaticASTMutator:
                         original,
                         index,
                         f"binop_{index}_swap",
+                    )
+                )
+
+        calls = self._find_nodes(original, ast.Call)
+
+        for index, node in enumerate(calls):
+            if len(node.args) >= 2:
+                candidates.append(
+                    self._swap_call_args(
+                        original,
+                        index,
+                        len(node.args) - 2,
+                        len(node.args) - 1,
+                        f"call_{index}_swap_last_args",
                     )
                 )
 
